@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<!--PAGE-START-->
+<title>Escape the Desk</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Nunito:wght@400;700&display=swap">
+<style>
+  /* Layout: one centred game screen, a status bar inside it, controls underneath.
+     A single night-classroom look on purpose, so it is the same in light and dark mode. */
+  :root {
+    --bg: #1d1a2b;
+    --panel: #2a2540;
+    --fg: #f4ecd8;
+    --muted: #b9b0cf;
+    --pencil: #f6c624;
+    --eraser: #f08aa0;
+    --ok: #7be08a;
+    --danger: #ff6b6b;
+    --pixel: "Silkscreen", "Courier New", monospace;
+    --body: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 var(--body);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 16px 24px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+  header { width: 100%; max-width: 960px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font: 700 clamp(22px, 4vw, 34px)/1 var(--pixel); margin: 0; color: var(--pencil); letter-spacing: 0.02em; text-shadow: 3px 3px 0 #000; }
+  header p { margin: 0; color: var(--muted); }
+  .stage { position: relative; width: 100%; max-width: 960px; aspect-ratio: 16 / 9; }
+  canvas {
+    display: block; width: 100%; height: 100%;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    background: #000; border: 3px solid #000; border-radius: 4px; box-sizing: border-box;
+    box-shadow: 0 0 0 3px var(--panel), 0 10px 30px rgba(0, 0, 0, 0.5);
+  }
+  .hud {
+    position: absolute; top: 3%; left: 3%; right: 3%;
+    display: flex; justify-content: space-between; gap: 8px; pointer-events: none;
+    font: 400 clamp(8px, 1.5vw, 14px)/1.2 var(--pixel); color: var(--fg); text-shadow: 2px 2px 0 #000;
+  }
+  .hud span { display: block; }
+  .hud .label { color: var(--muted); }
+  #hud-tip[data-level="0"] { color: var(--ok); }
+  #hud-tip[data-level="1"], #hud-tip[data-level="2"] { color: var(--pencil); }
+  #hud-tip[data-level="3"] { color: var(--danger); }
+  .hud .right { text-align: right; }
+  .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(20, 16, 32, 0.6); border-radius: 4px; }
+  .card { text-align: center; padding: 18px 22px; max-width: 80%; }
+  .card h2 { font: 700 clamp(18px, 4.5vw, 40px)/1.1 var(--pixel); margin: 0 0 8px; color: var(--pencil); text-shadow: 3px 3px 0 #000; text-wrap: balance; }
+  .card h2.win { color: var(--ok); }
+  .card h2.lose { color: var(--danger); }
+  .card p { margin: 0 0 12px; font-size: clamp(13px, 1.8vw, 17px); text-wrap: balance; }
+  .card .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  button {
+    font: 700 clamp(13px, 1.8vw, 18px)/1 var(--pixel); color: #1d1a2b; background: var(--pencil);
+    border: 0; border-radius: 3px; padding: 12px 20px; cursor: pointer;
+    box-shadow: 0 4px 0 #a8770c;
+  }
+  button:active { transform: translateY(3px); box-shadow: 0 1px 0 #a8770c; }
+  button:focus-visible { outline: 3px solid var(--eraser); outline-offset: 3px; }
+  .touch { display: none; width: 100%; max-width: 960px; justify-content: space-between; gap: 12px; user-select: none; -webkit-user-select: none; }
+  .touch .group { display: flex; gap: 10px; }
+  .touch button { width: 64px; height: 64px; padding: 0; font-size: 22px; background: var(--panel); color: var(--fg); box-shadow: 0 4px 0 #000; touch-action: none; }
+  .touch button.down { background: var(--pencil); color: #1d1a2b; }
+  .touch button.stab { width: 80px; background: var(--eraser); color: #1d1a2b; font-size: 13px; }
+  @media (pointer: coarse) { .touch { display: flex; } }
+  .help { width: 100%; max-width: 960px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 24px; color: var(--muted); }
+  .help div { min-width: 0; }
+  .help b { color: var(--fg); font-weight: 700; }
+  kbd { font: 400 12px/1 var(--pixel); background: var(--panel); color: var(--fg); border-radius: 3px; padding: 3px 6px; border-bottom: 2px solid #000; white-space: nowrap; }
+  .foot { width: 100%; max-width: 960px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+  .foot button { font-size: 11px; padding: 8px 12px; background: var(--panel); color: var(--fg); box-shadow: 0 3px 0 #000; }
+  @media (prefers-reduced-motion: reduce) { button:active { transform: none; } }
+</style>
+
+<header>
+  <h1>Escape the Desk</h1>
+  <p>Level 1 · Help Timothy roll off the desk before the hands grab him.</p>
+</header>
+
+<div class="stage">
+  <canvas id="game" width="320" height="180" aria-label="Escape the Desk game screen"></canvas>
+  <div class="hud" aria-live="polite">
+    <div><span class="label">Timothy's tip</span><span id="hud-tip" data-level="0">Sharp</span><span id="hud-len" class="label">Full length</span></div>
+    <div class="right"><span class="label">Level</span><span>1</span></div>
+  </div>
+  <div class="overlay" id="overlay">
+    <div class="card">
+      <h2>Escape the Desk</h2>
+      <p>You're Timothy the pencil. Get off either end of the desk, and don't let a hand grab you.</p>
+      <button type="button" id="play">Play</button>
+      <p class="hint">or press Enter</p>
+    </div>
+  </div>
+</div>
+
+<div class="touch" aria-label="Touch controls">
+  <div class="group">
+    <button type="button" data-act="left" aria-label="Left">◀</button>
+    <button type="button" data-act="right" aria-label="Right">▶</button>
+  </div>
+  <div class="group">
+    <button type="button" data-act="down" aria-label="Tip over">▼</button>
+    <button type="button" data-act="up" aria-label="Jump or stand up">▲</button>
+    <button type="button" class="stab" data-act="stab" aria-label="Stab">Stab</button>
+  </div>
+</div>
+
+<section class="help" aria-label="How to play">
+  <div><kbd>←</kbd> <kbd>→</kbd> <b>Walk</b>, or <b>roll</b> when you're lying down. Rolling keeps its speed.</div>
+  <div><kbd>↑</kbd> <b>Jump</b>, or stand back up.</div>
+  <div><kbd>↓</kbd> <b>Tip over</b> onto your side. You're low enough to duck a high swipe.</div>
+  <div><kbd>Space</kbd> <b>Stab</b> a hand with your tip. It jerks away, but you get duller and slower.</div>
+  <div><b>Sharpener:</b> stand at it and press <kbd>↓</kbd>. Makes you sharp again. If you're already sharp, you just get shorter.</div>
+  <div><kbd>R</kbd> <b>Restart</b> · <kbd>M</kbd> <b>Sound on or off</b></div>
+</section>
+
+<div class="foot">
+  <span>Watch for the warnings: a shadow means a slam or a guard, dots mean a dive, and a red ! at the side means a swipe.</span>
+  <button type="button" id="mute">Sound on</button>
+</div>
+
+<script src="src/game.js"></script>
+<!--PAGE-END-->
+</body>
+</html>
