@@ -1080,7 +1080,7 @@
     overlay.innerHTML = won
       ? `<div class="card"><h2 class="win">Timothy escaped!</h2><p>Off the desk in ${secs} seconds.</p><button type="button" id="again">Play again</button><p class="hint">or press R</p></div>`
       : `<div class="card"><h2 class="lose">Caught!</h2><p>The hand got Timothy after ${secs} seconds.</p><button type="button" id="again">Try again</button><p class="hint">or press R</p></div>`;
-    $('again').addEventListener('click', () => { sfx.ensure(); startLevel(); });
+    $('again').addEventListener('click', () => { sfx.ensure(); startLevel(); grabKeys(); });
     $('again').focus({ preventScroll: true });
   }
   function updateHud() {
@@ -1090,7 +1090,16 @@
     $('hud-len').textContent = P.bodyLen >= 20 ? 'Full length' : `Shorter (${Math.round((standH() / (35)) * 100)}%)`;
   }
   function updateMuteLabel(m) { const b = $('mute'); if (b) b.textContent = m ? 'Sound off' : 'Sound on'; }
-  $('play').addEventListener('click', () => { sfx.ensure(); startLevel(); });
+  $('play').addEventListener('click', () => { sfx.ensure(); startLevel(); grabKeys(); });
+
+  // Keys only reach the game once the page has keyboard focus. When the game is
+  // shown inside another page, that takes a click, so grab focus whenever we can.
+  function grabKeys() {
+    try { window.focus(); canvas.focus({ preventScroll: true }); } catch (e) { /* not allowed yet */ }
+  }
+  window.addEventListener('pointerdown', (e) => { if (!e.target.closest('button')) grabKeys(); });
+  window.addEventListener('load', grabKeys);
+  grabKeys();
   $('mute')?.addEventListener('click', () => { sfx.ensure(); updateMuteLabel(sfx.toggleMute()); });
 
   // ---------------------------------------------------------------------------
