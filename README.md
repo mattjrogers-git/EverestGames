@@ -26,6 +26,8 @@ Each stab makes Timothy duller and slower. The sharpener makes him sharp again, 
 - **Swipe:** the hand drops in beside Timothy and sweeps across. Jump a low swipe, lie down under a high one. Books, the eraser and the pencil cup block it.
 - **Guard:** the hand sits on one end of the desk for a few seconds.
 
+The closer Timothy gets to either end of the desk, the more often the hands attack. Near an end both hands come at once, and one of them usually guards the way out. Stab the guard to make it jerk away.
+
 ## Where things are
 
 - `index.html`: the page around the game.

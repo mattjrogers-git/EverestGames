@@ -74,6 +74,10 @@
     minBody: 8,
     warnTime: 0.7,          // the warning before each hand move
     guardEvery: 5,          // the longest gap (seconds) between edge guards
+    edgeFar: 125,           // the hands start to hurry when Timothy is this close to an end of the desk
+    edgeNear: 15,           // ...and are at their fastest when he is this close
+    edgeRush: 3,            // at their fastest, the hands attack this many times more often
+    edgePress: 0.3,         // above this much danger both hands attack together and one blocks the way out
     stabTime: 0.45,         // how long Timothy holds his tip out
   };
 
@@ -701,14 +705,21 @@
     return LEVEL.solids.some((s) => circleRect(c.x, c.y, c.r - 2, { l: s.x, r: s.x + s.w, t: s.top, b: DESK_Y }));
   }
 
+  // How close Timothy is to escaping: 0 in the middle of the desk, 1 right at an end.
+  function edgeDanger() {
+    const d = Math.min(P.x - DESK_L, DESK_R - P.x);
+    return clamp(1 - (d - TUNE.edgeNear) / (TUNE.edgeFar - TUNE.edgeNear), 0, 1);
+  }
+  const nearerEnd = () => (P.x < (DESK_L + DESK_R) / 2 ? -1 : 1);
+
   function startMove(h, move) {
     h.move = move; h.state = 'warn'; h.t = 0; h.fist = false;
     if (move === 'slam' || move === 'guard') {
       if (move === 'slam') {
         h.tx = clamp(P.x + P.vx * 0.2, DESK_L + 8, DESK_R - 8);
       } else {
-        const nearer = P.x < (DESK_L + DESK_R) / 2 ? -1 : 1;
-        h.side = Math.random() < 0.7 ? nearer : -nearer;
+        const nearer = nearerEnd();
+        h.side = game.danger > TUNE.edgePress || Math.random() < 0.7 ? nearer : -nearer;
         h.tx = h.side < 0 ? DESK_L + 12 : DESK_R - 12;
       }
       h.ty = groundAt(h.tx);
@@ -757,7 +768,8 @@
   function updateHand(h, dt) {
     h.t += dt;
     if (h.shake > 0) h.shake -= dt;
-    if (h.state === 'idle') { h.rest -= dt; return; }
+    if (h.stun > 0) h.stun -= dt;
+    if (h.state === 'idle') { h.rest -= dt * (1 + TUNE.edgeRush * game.danger); return; }
     const warn = TUNE.warnTime;
 
     if (h.state === 'hurt') {
@@ -827,22 +839,34 @@
   }
 
   function scheduleHands(dt) {
-    game.nextMove -= dt;
+    // the closer Timothy is to an end of the desk, the faster the hands' clock runs
+    game.nextMove -= dt * (1 + TUNE.edgeRush * game.danger);
     if (game.nextMove > 0) return;
     const busy = hands.filter((h) => h.state !== 'idle');
-    if (busy.some((h) => h.move !== 'guard')) return;   // one attack at a time (a guard can overlap)
-    const ready = hands.filter((h) => h.state === 'idle' && h.rest <= 0);
+    const pressing = game.danger > TUNE.edgePress;
+    if (pressing) {
+      // near an end both hands can attack together, but only one warning at a time
+      if (busy.some((h) => h.state === 'warn')) return;
+    } else if (busy.some((h) => h.move !== 'guard')) {
+      return;                                           // one attack at a time (a guard can overlap)
+    }
+    const ready = hands.filter((h) => h.state === 'idle' && h.rest <= 0 && !(h.stun > 0));
     if (!ready.length) return;
     const h = ready.find((x) => x !== game.lastHand) || ready[0];
+    const guarding = busy.some((x) => x.move === 'guard');
     const weights = { slam: 3, dive: 2, swipe: 3, guard: 4 };
-    if (busy.length) delete weights.guard;
+    if (guarding) delete weights.guard;
     if (game.lastMove && Object.keys(weights).length > 1) delete weights[game.lastMove];
     let total = 0;
     for (const k in weights) total += weights[k];
     let roll = Math.random() * total, move = 'slam';
     for (const k in weights) { roll -= weights[k]; if (roll <= 0) { move = k; break; } }
-    // a hand guards an end of the desk at least every few seconds
-    if (!busy.length && game.time - game.lastGuard > TUNE.guardEvery) move = 'guard';
+    if (!guarding) {
+      // a hand guards an end of the desk at least every few seconds...
+      if (game.time - game.lastGuard > TUNE.guardEvery) move = 'guard';
+      // ...and blocks the way out when Timothy makes a run for it
+      if (pressing) move = 'guard';
+    }
     if (move === 'guard') game.lastGuard = game.time;
     startMove(h, move);
     game.lastMove = move; game.lastHand = h;
@@ -858,14 +882,14 @@
   // ---------------------------------------------------------------------------
   // Game state
   // ---------------------------------------------------------------------------
-  const game = { state: 'title', t: 0, time: 0, nextMove: 0, lastMove: null, lastHand: null, shake: 0, overlayT: 0 };
+  const game = { state: 'title', t: 0, time: 0, danger: 0, lastGuard: 0, nextMove: 0, lastMove: null, lastHand: null, shake: 0, overlayT: 0 };
 
   function startLevel() {
     resetPencil();
     hands.length = 0;
     hands.push(makeHand(-1), makeHand(1));
     pops.length = 0;
-    Object.assign(game, { state: 'ready', t: 0, time: 0, lastGuard: -2, nextMove: 1.0, lastMove: null, lastHand: null, shake: 0 });
+    Object.assign(game, { state: 'ready', t: 0, time: 0, danger: 0, lastGuard: -2, nextMove: 0.7, lastMove: null, lastHand: null, shake: 0 });
     hideOverlay();
     updateHud();
   }
@@ -892,6 +916,7 @@
     } else if (game.state === 'play') {
       game.time += dt;
       updatePencil(dt);
+      game.danger = edgeDanger();
       scheduleHands(dt);
       for (const h of hands) updateHand(h, dt);
 
@@ -904,7 +929,7 @@
           if (h.state !== 'act' && h.state !== 'retreat') continue;
           const c = handCircle(h);
           if (circleRect(c.x, c.y, c.r, guardBox)) {
-            h.state = 'hurt'; h.t = 0; h.shake = 0.4;
+            h.state = 'hurt'; h.t = 0; h.shake = 0.4; h.stun = 1.7;   // a stabbed hand stays away for a moment
             h.hvx = Math.sign(h.x - P.x || h.home) * 140; h.hvy = -220;
             P.dull = Math.min(TUNE.maxDull, P.dull + 1);
             P.stabT = Math.min(P.stabT, 0.12);
@@ -1086,5 +1111,5 @@
   requestAnimationFrame(frame);
 
   // A hook for automated tests: lets a script read the game state.
-  window.__escapeTheDesk = { game, P, hands, startLevel, startMove, LEVEL };
+  window.__escapeTheDesk = { game, P, hands, held, pressed, update, startLevel, startMove, handCircle, LEVEL, TUNE };
 })();
