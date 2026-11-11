@@ -73,6 +73,8 @@
     shortenBy: 3,           // pixels lost when sharpening a pencil that is already sharp
     minBody: 8,
     warnTime: 0.7,          // the warning before each hand move
+    guardEvery: 5,          // the longest gap (seconds) between edge guards
+    stabTime: 0.45,         // how long Timothy holds his tip out
   };
 
   // ---------------------------------------------------------------------------
@@ -168,9 +170,6 @@
     blob(g, 5, 8, 16, 11, PAL.skin);
     for (const [fx] of fingers) px(g, fx, 19, 3, 1, PAL.skin);
     px(g, 5, 8, 16, 1, PAL.skinDark);
-    // a smiley drawn on the back of the hand in blue marker
-    px(g, 10, 11, 1, 1, PAL.marker); px(g, 14, 11, 1, 1, PAL.marker);
-    px(g, 10, 13, 1, 1, PAL.marker); px(g, 11, 14, 3, 1, PAL.marker); px(g, 14, 13, 1, 1, PAL.marker);
     return c;
   })();
 
@@ -184,7 +183,6 @@
     for (const kx of [8, 12, 16]) px(g, kx, 16, 1, 6, PAL.outline);
     blob(g, 6, 12, 11, 3, PAL.skin);
     px(g, 6, 15, 11, 1, PAL.skinDark);
-    px(g, 11, 9, 1, 1, PAL.marker); px(g, 15, 9, 1, 1, PAL.marker);
     return c;
   })();
 
@@ -228,6 +226,7 @@
     }
     return frames;
   }
+  const [STAB_C, STAB_G] = makeCanvas(96, 96);
   const ROLL_TIP = makeRollFrames('tip');
   const ROLL_ERASER = makeRollFrames('eraser');
 
@@ -567,6 +566,21 @@
     updateHud();
   }
 
+  // Which way to point the tip: at the nearest hand that's coming for Timothy (0 = straight up).
+  function aimAtHand() {
+    const cx = P.x, cy = P.y - 2;
+    let best = null, bestD = Infinity;
+    for (const h of hands) {
+      if (h.state !== 'warn' && h.state !== 'act' && h.state !== 'retreat') continue;
+      const c = handCircle(h);
+      const d = Math.hypot(c.x - cx, c.y - cy) - (h.state === 'act' ? 60 : 0);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (!best) return 0;
+    const a = clamp(Math.atan2(best.x - cx, -(best.y - cy)), -2.2, 2.2);
+    return Math.round(a / (Math.PI / 12)) * (Math.PI / 12);   // 15 degree steps keep the pixels tidy
+  }
+
   function updatePencil(dt) {
     const dir = (held.right ? 1 : 0) - (held.left ? 1 : 0);
     const spd = speedFactor();
@@ -622,10 +636,11 @@
 
     // stab: point the tip at a hand
     P.stabCD -= dt;
-    if (P.stabT > 0) P.stabT -= dt;
+    if (P.stabT > 0) { P.stabT -= dt; P.stabAngle = aimAtHand(); }
     if (pressed.stab && P.stabCD <= 0) {
       if (P.lying) { P.lying = false; pushOut(); P.vx = clamp(P.vx, -TUNE.walkSpeed, TUNE.walkSpeed); }
-      P.stabT = 0.22; P.stabCD = 0.45;
+      P.stabT = TUNE.stabTime; P.stabCD = TUNE.stabTime + 0.2;
+      P.stabAngle = aimAtHand();
       sfx.stab();
     }
 
@@ -819,13 +834,16 @@
     const ready = hands.filter((h) => h.state === 'idle' && h.rest <= 0);
     if (!ready.length) return;
     const h = ready.find((x) => x !== game.lastHand) || ready[0];
-    const weights = { slam: 3, dive: 2, swipe: 3, guard: 1.5 };
+    const weights = { slam: 3, dive: 2, swipe: 3, guard: 4 };
     if (busy.length) delete weights.guard;
     if (game.lastMove && Object.keys(weights).length > 1) delete weights[game.lastMove];
     let total = 0;
     for (const k in weights) total += weights[k];
     let roll = Math.random() * total, move = 'slam';
     for (const k in weights) { roll -= weights[k]; if (roll <= 0) { move = k; break; } }
+    // a hand guards an end of the desk at least every few seconds
+    if (!busy.length && game.time - game.lastGuard > TUNE.guardEvery) move = 'guard';
+    if (move === 'guard') game.lastGuard = game.time;
     startMove(h, move);
     game.lastMove = move; game.lastHand = h;
     game.nextMove = rand(0.5, 1.0);
@@ -847,7 +865,7 @@
     hands.length = 0;
     hands.push(makeHand(-1), makeHand(1));
     pops.length = 0;
-    Object.assign(game, { state: 'ready', t: 0, time: 0, nextMove: 1.0, lastMove: null, lastHand: null, shake: 0 });
+    Object.assign(game, { state: 'ready', t: 0, time: 0, lastGuard: -2, nextMove: 1.0, lastMove: null, lastHand: null, shake: 0 });
     hideOverlay();
     updateHud();
   }
@@ -878,17 +896,18 @@
       for (const h of hands) updateHand(h, dt);
 
       // stab first: a hand you poke can't grab you
-      if (P.stabT > 0.07) {
-        const top = P.y - standH();
-        const tipBox = { l: P.x - 4, r: P.x + 4, t: top - 10, b: top + 6 };
+      // while the tip is out, any hand that touches Timothy gets stabbed
+      if (P.stabT > 0) {
+        const b = pencilBox(0), reach = 5;
+        const guardBox = { l: b.l - reach, r: b.r + reach, t: b.t - reach, b: b.b };
         for (const h of hands) {
           if (h.state !== 'act' && h.state !== 'retreat') continue;
           const c = handCircle(h);
-          if (circleRect(c.x, c.y, c.r, tipBox)) {
+          if (circleRect(c.x, c.y, c.r, guardBox)) {
             h.state = 'hurt'; h.t = 0; h.shake = 0.4;
             h.hvx = Math.sign(h.x - P.x || h.home) * 140; h.hvy = -220;
             P.dull = Math.min(TUNE.maxDull, P.dull + 1);
-            P.stabT = 0;
+            P.stabT = Math.min(P.stabT, 0.12);
             sfx.ouch();
             pop(c.x, c.y - 16, 'OUCH!', PAL.danger);
             game.nextMove = Math.max(game.nextMove, 1.0);
@@ -982,11 +1001,21 @@
     let mood = nearHand ? 'worried' : 'smile';
     if (game.state === 'won') mood = 'happy';
     if (game.state === 'caught') mood = 'worried';
-    const stabbing = P.stabT > 0.05;
-    drawTimothy(ctx, P.x, P.y - (stabbing ? 3 : 0), {
+    const stabbing = P.stabT > 0;
+    const opts = {
       bodyLen: P.bodyLen, dull: P.dull, facing: P.facing, walkPhase: P.walkPhase,
-      stabbing, mood, airborne: !P.onGround,
-    });
+      stabbing, mood: stabbing ? 'smile' : mood, airborne: !P.onGround,
+    };
+    if (!stabbing) { drawTimothy(ctx, P.x, P.y, opts); return; }
+    // stabbing: draw Timothy on his own little canvas, then turn him so his tip points at the hand
+    // he leans from his eraser feet, like pointing
+    STAB_G.clearRect(0, 0, 96, 96);
+    drawTimothy(STAB_G, 48, 48, opts);
+    ctx.save();
+    ctx.translate(Math.round(P.x), Math.round(P.y) - 2);
+    ctx.rotate(P.stabAngle || 0);
+    ctx.drawImage(STAB_C, -48, -46);
+    ctx.restore();
   }
 
   function render() {
